@@ -2,24 +2,44 @@
 
 
 use DataDog::DogStatsd;
-
+use File::Tail;
+my $VERSION = "0.02";
+my $PIDFILE = "/var/run/dogwatcher.pid";
+my $LOGWAITINT=1;
 my $QFILE = "/var/log/named/queries.log";
-open(Q, $QFILE) or die "$! -> $QFILE";
-
 my $HOSTNAME= `hostname`;
 chomp($HOSTNAME);
 my %OPTS;
 $OPTS->{'tags'} = $HOSTNAME;
+open(PID,">$PIDFILE");
+print PID $$ or die;
+close(PID);
+
+
 my %CLIENT_STATS;
 my %REQUEST_STATS;
 my %CLASS_STATS; 
 my %TYPE_STATS;
 
-my @DATA = <Q>;
-close(QFILE);
 my $stat = DataDog::DogStatsd->new();
 
-foreach $l (@DATA){
+@query_list=("A", "PTR", "ANY", "MX", "NS", "CNAME", "SOA", "SRV", "AAAA");
+$SIG{'HUP'}='dump';
+sub init {
+
+}
+sub getlogline {
+	if(!defined($LFFD)){
+		$LFFD = File::Tail->new(name=>$QFILE,maxinterval=>5,interval=>$LOGWAITINT);
+		if(!defined $LFFD) {
+			die "Can't open $QFILE.";
+		}
+	}
+	return $LFFD->read;
+}
+
+init();
+while ($l=getlogline) {
 	my @L = split(' ',$l);
 	my $i = 0;
 	my $client = $L[3];
@@ -50,11 +70,20 @@ foreach $l (@DATA){
 	elsif ($type eq "IXFR"){
 		$stat->set('dns.query.ixfr',$request,%OPTS);
 	}
-}
-foreach (keys %CLIENT_STATS){
-		#print "$_ ".$CLIENT_STATS{"$_"}."\n";
-}
-foreach (keys %REQUEST_STATS){
-		#print "$_ ".$REQUEST_STATS{"$_"}."\n";
+	elsif ($type eq "NS"){
+		$stat->set('dns.query.ns',$request,%OPTS);
+	}
+	elsif ($type eq "MX"){
+		$stat->set('dns.query.mx',$request,%OPTS);
+	}
 }
 
+sub dump {
+	foreach (keys %CLIENT_STATS){
+		print "$_ ".$CLIENT_STATS{"$_"}."\n";
+	}
+	foreach (keys %REQUEST_STATS){
+		print "$_ ".$REQUEST_STATS{"$_"}."\n";
+	}
+	die;
+}
